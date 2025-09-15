@@ -18,7 +18,7 @@ This is a Flask-based REST API that automatically processes uploaded images, gen
 ### 1. Setup
 ```bash
 git clone <repo_url>
-cd htx_tha/app
+cd htx_tha
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -36,14 +36,14 @@ export HF_API_KEY=your_huggingface_api_key  # This is for the AI captioning
 
 ### 4. Run the Server
 ```bash
-python routes.py
+python main.py
 ```
 API available at: `http://localhost:5000`
 
 ### 5. Test the API
 ```bash
 cp /path/to/test/image.jpg test_image.jpg
-python test_api.py
+pytest -q tests/test_api.py
 ```
 
 ## API Endpoints
@@ -171,8 +171,6 @@ All errors return consistent JSON format:
 - Database: `app/image_data.db`
 - Logs: `app.log`
 
-## Testing
-
 ### Manual Testing
 ```bash
 # Place test image in app directory
@@ -196,7 +194,7 @@ Use the curl commands shown in the API endpoints section above.
 **Debug Mode:**
 ```bash
 export FLASK_DEBUG=1
-python routes.py
+python main.py
 ```
 
 Check `app.log` for detailed processing information and errors.
@@ -206,7 +204,7 @@ Check `app.log` for detailed processing information and errors.
 ### Using Gunicorn
 ```bash
 pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:5000 routes:app
+gunicorn -w 4 -b 0.0.0.0:5000 main:app
 ```
 
 ### Docker 

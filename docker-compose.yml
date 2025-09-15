@@ -9,5 +9,5 @@ services:
     volumes:
       - ./app/statics:/app/statics
       - ./app/image_data.db:/app/image_data.db
-      - ./app/app.log:/app/app.log
+      - ./app/logs:/app/logs
     restart: unless-stopped

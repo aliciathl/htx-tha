@@ -58,9 +58,9 @@ def get_caption_from_hf(path):
             resp = requests.post(HF_API_URL, headers=headers, files=files, timeout=30)
         if resp.status_code == 200:
             result = resp.json()
-            if isinstance(result, list) and "generated_text" in result[0]:
+            if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
                 return result[0]["generated_text"]
-            if isinstance(result, dict) and "generated_text" in result:
+            if isinstance(result, dict) and result.get("generated_text"):
                 return result["generated_text"]
         logger.warning(f"HF API failed: {resp.status_code}")
     except Exception as e:
