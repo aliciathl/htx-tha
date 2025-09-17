@@ -1,0 +1,22 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Database
+app/image_data.db
+
+# Logs
+logs/
+app/logs/
+
+# Static uploads
+app/statics/imageOG/
+app/statics/thumbnails/

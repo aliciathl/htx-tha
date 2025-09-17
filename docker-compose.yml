@@ -1,11 +1,10 @@
-version: '3.8'
 services:
   image-api:
     build: .
     ports:
       - "5000:5000"
     environment:
-      - HF_API_KEY=${HF_API_KEY:-}
+      - HF_API_KEY=${HF_API_KEY}
     volumes:
       - ./app/statics:/app/statics
       - ./app/image_data.db:/app/image_data.db

@@ -1,12 +1,14 @@
 import os
 from datetime import datetime, timezone
-from flask import current_app as app, request, jsonify, send_file, url_for
+from flask import Blueprint, current_app, request, jsonify, send_file, url_for
 from sqlalchemy import func as sa_func
 from werkzeug.utils import secure_filename
 from .utils.logging import logger
 from .models.database import SessionLocal
 from .models.imageModel import Image
 from .services.worker import enqueue_image_job
+
+routes_bp = Blueprint("routes_bp", __name__)
 
 ALLOWED_EXT = {"jpg", "jpeg", "png"}
 
@@ -15,11 +17,11 @@ def error_response(msg, code=400):
 
 def build_thumbnail_urls(image_id):
     return {
-        "small": url_for("get_thumbnail", image_id=image_id, size="small", _external=True),
-        "medium": url_for("get_thumbnail", image_id=image_id, size="medium", _external=True)
+        "small": url_for("routes_bp.get_thumbnail", image_id=image_id, size="small", _external=True),
+        "medium": url_for("routes_bp.get_thumbnail", image_id=image_id, size="medium", _external=True)
     }
 
-@app.route("/api/images", methods=["POST"])
+@routes_bp.route("/api/images", methods=["POST"])
 def upload_image():
     if "file" not in request.files:
         return error_response("No file part")
@@ -31,7 +33,7 @@ def upload_image():
 
     db = SessionLocal()
     try:
-        upload_dir = app.config["UPLOAD_DIR"]
+        upload_dir = current_app.config["UPLOAD_DIR"]
         os.makedirs(upload_dir, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
         stored_filename = f"{timestamp}_{secure_filename(file.filename)}"
@@ -45,20 +47,15 @@ def upload_image():
 
         enqueue_image_job(img.id, stored_path, file.filename)
 
-        return (
-            jsonify(
-                {
-                    "status": "success",
-                    "data": {
-                        "image_id": img.id,
-                        "original_name": file.filename,
-                        "status": "processing"
-                    },
-                    "error": None
-                }
-            ),
-            202,
-        )
+        return jsonify({
+            "status": "success",
+            "data": {
+                "image_id": img.id,
+                "original_name": file.filename,
+                "status": "processing"
+            },
+            "error": None
+        }), 202
     except Exception as e:
         db.rollback()
         logger.exception(e)
@@ -66,7 +63,7 @@ def upload_image():
     finally:
         db.close()
 
-@app.route("/api/images", methods=["GET"])
+@routes_bp.route("/api/images", methods=["GET"])
 def list_images():
     db = SessionLocal()
     try:
@@ -85,7 +82,7 @@ def list_images():
     finally:
         db.close()
 
-@app.route("/api/images/<int:image_id>/thumbnails/<size>", methods=["GET"])
+@routes_bp.route("/api/images/<int:image_id>/thumbnails/<size>", methods=["GET"])
 def get_thumbnail(image_id, size):
     if size not in {"small", "medium"}:
         return error_response("Invalid size")
@@ -101,7 +98,7 @@ def get_thumbnail(image_id, size):
     finally:
         db.close()
 
-@app.route("/api/images/<int:image_id>", methods=["GET"])
+@routes_bp.route("/api/images/<int:image_id>", methods=["GET"])
 def get_image_details(image_id):
     db = SessionLocal()
     try:
@@ -126,7 +123,7 @@ def get_image_details(image_id):
     finally:
         db.close()
 
-@app.route("/api/stats", methods=["GET"])
+@routes_bp.route("/api/stats", methods=["GET"])
 def get_stats():
     db = SessionLocal()
     try:
@@ -158,7 +155,7 @@ def get_stats():
     finally:
         db.close()
 
-@app.route("/", methods=["GET"])
+@routes_bp.route("/", methods=["GET"])
 def health_check():
     return jsonify({
         "status": "success",

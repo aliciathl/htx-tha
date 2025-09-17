@@ -28,7 +28,7 @@ def test_upload_image():
     print("\n--- Testing Image Upload ---")
     
     # Create a simple test image if none exists
-    test_image_path = "test_image.jpg"
+    test_image_path = "app/statics/test_image.jpg"
     if not os.path.exists(test_image_path):
         print("No test image found. Please create a test image or provide a path.")
         return None

@@ -17,7 +17,7 @@ This is a Flask-based REST API that automatically processes uploaded images, gen
 
 ### 1. Setup
 ```bash
-git clone <repo_url>
+git clone <the_url_of_this_repo>
 cd htx_tha
 python -m venv .venv
 source .venv/bin/activate
