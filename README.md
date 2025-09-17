@@ -1,4 +1,3 @@
-
 # Image Processing Pipeline API
 
 This is a Flask-based REST API that automatically processes uploaded images, generates thumbnails, extracts metadata, and provides AI-generated captions.
@@ -31,7 +30,7 @@ python init_db.py
 
 ### 3. Set Environment Variables
 ```bash
-export HF_API_KEY=your_huggingface_api_key
+in .env: HF_API_KEY=your_huggingface_api_key
 ```
 
 ### 4. Run the Server
@@ -48,35 +47,191 @@ pytest -q tests/test_api.py
 
 ## API Endpoints
 
-### Upload Image
-```bash
-POST /api/images
-curl -F "file=@photo.jpg" http://localhost:5000/api/images
+### 1. Check API Status
+```http
+GET http://localhost:5000/
+```
+**Response:**
+```json
+{
+  "data": {
+    "message": "Image Processing API is running"
+  },
+  "error": null,
+  "status": "success"
+}
 ```
 
-### List All Images
-```bash
-GET /api/images
-curl http://localhost:5000/api/images
+### 2. Upload Image
+```http
+POST http://localhost:5000/api/images
+Content-Type: multipart/form-data
+
+file: [select image file - test_image.jpg]
 ```
 
-### Get Image Details
-```bash
-GET /api/images/{id}
-curl http://localhost:5000/api/images/1
+**Response:**
+```json
+{
+  "data": {
+    "image_id": 1,
+    "original_name": "test_image.jpg",
+    "status": "processing"
+  },
+  "error": null,
+  "status": "success"
+}
 ```
 
-### Get Thumbnails
-```bash
-GET /api/images/{id}/thumbnails/{size}
-curl http://localhost:5000/api/images/1/thumbnails/small --output thumb.jpg
+### 3. List All Images
+```http
+GET http://localhost:5000/api/images
 ```
 
-### Processing Statistics
-```bash
-GET /api/stats
-curl http://localhost:5000/api/stats
+**Response:**
+```json
+{
+  "data": [
+    {
+      "image_id": 1,
+      "original_name": "test_image.jpg",
+      "processed_at": "2025-09-17T12:32:59.530218",
+      "status": "success",
+      "thumbnails": {
+        "medium": "http://localhost:5000/api/images/1/thumbnails/medium",
+        "small": "http://localhost:5000/api/images/1/thumbnails/small"
+      }
+    }
+  ],
+  "error": null,
+  "status": "success"
+}
 ```
+
+### 4. Get Image Details
+```http
+GET http://localhost:5000/api/images/1
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "caption": null,
+    "created_at": "2025-09-17T12:32:58",
+    "image_id": 1,
+    "metadata": {
+      "file_datetime": "2025-09-17T12:32:58.952950+00:00",
+      "format": "jpeg",
+      "height": 190,
+      "processed_at": "2025-09-17T12:32:59.035575+00:00",
+      "size_bytes": 5883,
+      "width": 265
+    },
+    "original_name": "test_image.jpg",
+    "processed_at": "2025-09-17T12:32:59.530218",
+    "status": "success",
+    "thumbnails": {
+      "medium": "http://localhost:5000/api/images/1/thumbnails/medium",
+      "small": "http://localhost:5000/api/images/1/thumbnails/small"
+    }
+  },
+  "error": null,
+  "status": "success"
+}
+```
+
+### 5. Get Thumbnails
+```http
+GET http://localhost:5000/api/images/1/thumbnails/small
+GET http://localhost:5000/api/images/1/thumbnails/medium
+```
+
+**Response:** Binary image data (JPEG format)
+
+### 6. Processing Statistics
+```http
+GET http://localhost:5000/api/stats
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "average_processing_time_seconds": 0.98,
+    "failed": 0,
+    "processing": 0,
+    "success_rate": 100.0,
+    "successful": 3,
+    "total_images": 3
+  },
+  "error": null,
+  "status": "success"
+}
+```
+
+## Testing with Postman
+
+### Postman Collection Setup
+
+1. **Create New Collection**: "Image Processing API"
+2. **Set Base URL**: `http://localhost:5000`
+3. **Configure requests as shown below**
+
+### Request Examples in Postman
+
+#### 1. API Status Check
+- **Method**: GET
+- **URL**: `{{base_url}}/`
+- **Expected Status**: 200 OK
+
+#### 2. Upload Image
+- **Method**: POST
+- **URL**: `{{base_url}}/api/images`
+- **Body**: 
+  - Type: `form-data`
+  - Key: `file` (File type)
+  - Value: Select your test image (e.g., `test_image.jpg`)
+- **Expected Status**: 202 ACCEPTED
+
+#### 3. List Images
+- **Method**: GET
+- **URL**: `{{base_url}}/api/images`
+- **Expected Status**: 200 OK
+
+#### 4. Get Specific Image
+- **Method**: GET
+- **URL**: `{{base_url}}/api/images/1`
+- **Expected Status**: 200 OK
+
+#### 5. Get Small Thumbnail
+- **Method**: GET
+- **URL**: `{{base_url}}/api/images/1/thumbnails/small`
+- **Expected Status**: 200 OK
+- **Response**: Binary image data
+
+#### 6. Get Statistics
+- **Method**: GET
+- **URL**: `{{base_url}}/api/stats`
+- **Expected Status**: 200 OK
+
+### Postman Environment Variables
+```json
+{
+  "base_url": "http://localhost:5000"
+}
+```
+
+### Testing Workflow
+
+1. **Start the API server**
+2. **Test API status** to ensure server is running
+3. **Upload an image** using form-data
+4. **Wait for processing** (usually < 1 second)
+5. **List all images** to see processed results
+6. **Get image details** to see full metadata
+7. **Download thumbnails** to verify image processing
+8. **Check statistics** to monitor API performance
 
 ## Image Processing Flow
 
@@ -88,15 +243,14 @@ curl http://localhost:5000/api/stats
 
 ## Dependencies
 
-Listed under requirements.txt
+Listed under requirements.txt:
 
-## Error Handling
-
-The API handles:
-- Invalid file types (only JPG/PNG supported)
-- Corrupted uploads and processing failures
-- Database connection issues
-- Missing resources
+### Common HTTP Status Codes
+- `200 OK`: Successful GET requests
+- `202 ACCEPTED`: Successful image upload (processing started)
+- `400 BAD REQUEST`: Invalid request (wrong file type, missing file)
+- `404 NOT FOUND`: Image not found
+- `500 INTERNAL SERVER ERROR`: Server processing error
 
 ## Configuration
 
@@ -104,13 +258,30 @@ The API handles:
 - `HF_API_KEY`: HuggingFace API key for image captioning
 - `FLASK_DEBUG=1`: Enable debug mode
 
-### File Storage
-- Original images: `app/statics/imageOG/`
-- Thumbnails: `app/statics/thumbnails/`
-- Database: `app/image_data.db`
-- Logs: `app.log`
+## Manual Testing Scripts
 
-### Manual Testing
+### cURL Testing
+```bash
+# Check API status
+curl http://localhost:5000/
+
+# Upload image
+curl -F "file=@test_image.jpg" http://localhost:5000/api/images
+
+# List images
+curl http://localhost:5000/api/images
+
+# Get specific image
+curl http://localhost:5000/api/images/1
+
+# Download thumbnail
+curl http://localhost:5000/api/images/1/thumbnails/small --output thumb_small.jpg
+
+# Get statistics
+curl http://localhost:5000/api/stats
+```
+
+### Python Testing Script
 ```bash
 # Place test image in app directory
 cp /path/to/image.jpg test_image.jpg
@@ -119,22 +290,41 @@ cp /path/to/image.jpg test_image.jpg
 python test_api.py
 ```
 
-### API Testing
-Use the curl commands shown in the API endpoints section above.
+### Pytest Testing
+```bash
+pytest -q tests/test_api.py
+```
 
 ## Troubleshooting
 
-**Common Issues:**
-- **"No file part"**: Use form field name "file" with multipart/form-data
-- **"Unsupported file type"**: Only .jpg, .jpeg, .png files accepted
-- **"Image not found"**: Check image ID exists via list endpoint
-- **AI captioning not working**: Set HF_API_KEY environment variable
+### Common Issues
 
-### Docker 
+**"No file part"**
+- Solution: Use form field name "file" with multipart/form-data
+- In Postman: Body → form-data → Key: "file" (File type)
+
+**"Unsupported file type"**
+- Solution: Only .jpg, .jpeg, .png files accepted
+- Check file extension and MIME type
+
+**AI captioning not working**
+- Solution: Set HF_API_KEY environment variable
+- Check HuggingFace API credentials and model availability
+
+## Docker Deployment
+
 ```bash
+# Build and run with Docker Compose
 docker-compose up --build -d
+
+# Check container status
 docker ps 
+
+# View logs
 docker logs <container_id>
+
+# Test API in container
+curl http://localhost:5000/
 ```
 
 ## Resources
@@ -142,3 +332,5 @@ docker logs <container_id>
 - [HuggingFace BLIP Model](https://huggingface.co/Salesforce/blip-image-captioning-large)
 - [Flask Documentation](https://flask.palletsprojects.com/)
 - [RESTful API Design](https://restfulapi.net/)
+- [Postman Documentation](https://learning.postman.com/docs/)
+- [PIL/Pillow Documentation](https://pillow.readthedocs.io/)

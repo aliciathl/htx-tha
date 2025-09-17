@@ -3,14 +3,12 @@ services:
     build: .
     ports:
       - "5000:5000"
-    environment:
-      - HF_API_KEY=${HF_API_KEY}
+    # environment:
+      # - HF_API_KEY=${HF_API_KEY}
+    env_file:
+      - .env
     volumes:
       # Mount app code
       - ./app:/app/app
 
-      # Mount statics, DB, logs separately
-      - ./app/statics:/app/app/statics
-      - ./app/image_data.db:/app/app/image_data.db
-      - ./app/logs:/app/app/logs
     restart: unless-stopped

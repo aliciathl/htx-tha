@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from PIL import Image as PILImage, UnidentifiedImageError
 import exifread
 import requests
+import base64
+import json
 from ..utils.logging import logger
 from werkzeug.utils import secure_filename
 
@@ -52,17 +54,24 @@ def get_caption_from_hf(path):
         logger.warning("HF_API_KEY not set; skipping caption")
         return None
     try:
+        # Read and encode image as base64
         with open(path, "rb") as f:
-            files = {"file": f}
-            headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-            resp = requests.post(HF_API_URL, headers=headers, files=files, timeout=30)
+            img_bytes = f.read()
+        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        payload = json.dumps({"inputs": img_b64})
+        headers = {
+            "Authorization": f"Bearer {HF_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(HF_API_URL, headers=headers, data=payload, timeout=30)
         if resp.status_code == 200:
             result = resp.json()
             if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
                 return result[0]["generated_text"]
             if isinstance(result, dict) and result.get("generated_text"):
                 return result["generated_text"]
-        logger.warning(f"HF API failed: {resp.status_code}")
+        else:
+            logger.warning(f"HF API failed: {resp.status_code}, response: {resp.text}")
     except Exception as e:
         logger.exception(f"Caption generation error: {e}")
     return None
