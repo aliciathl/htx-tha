@@ -50,31 +50,117 @@ def extract_exif(path):
         return None
 
 def get_caption_from_hf(path):
+    """Updated HuggingFace API call with improved error handling and multiple formats"""
     if not HF_API_KEY:
         logger.warning("HF_API_KEY not set; skipping caption")
         return None
+    
+    logger.info("Attempting to generate caption using HuggingFace API")
+    
+    # Method 1: Try binary data upload (new serverless inference format)
     try:
-        # Read and encode image as base64
+        headers = {
+            "Authorization": f"Bearer {HF_API_KEY}",
+        }
+        
+        with open(path, "rb") as f:
+            response = requests.post(HF_API_URL, headers=headers, data=f.read(), timeout=30)
+        
+        logger.info(f"Binary upload - Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Binary upload result: {result}")
+            
+            # Handle different response formats
+            if isinstance(result, list) and len(result) > 0:
+                if "generated_text" in result[0]:
+                    return result[0]["generated_text"]
+                elif "caption" in result[0]:
+                    return result[0]["caption"]
+                elif "label" in result[0]:
+                    return result[0]["label"]
+            elif isinstance(result, dict):
+                if "generated_text" in result:
+                    return result["generated_text"]
+                elif "caption" in result:
+                    return result["caption"]
+        
+        elif response.status_code == 503:
+            logger.warning("Model is loading, trying alternative method...")
+        elif response.status_code == 429:
+            logger.warning("Rate limit exceeded, trying alternative method...")
+        else:
+            logger.warning(f"Binary upload failed: {response.status_code}, response: {response.text}")
+        
+    except Exception as e:
+        logger.warning(f"Binary upload method failed: {e}")
+    
+    # Method 2: Try base64 JSON format (legacy format)
+    try:
         with open(path, "rb") as f:
             img_bytes = f.read()
         img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+        
         payload = json.dumps({"inputs": img_b64})
         headers = {
             "Authorization": f"Bearer {HF_API_KEY}",
             "Content-Type": "application/json"
         }
-        resp = requests.post(HF_API_URL, headers=headers, data=payload, timeout=30)
-        if resp.status_code == 200:
-            result = resp.json()
+        
+        response = requests.post(HF_API_URL, headers=headers, data=payload, timeout=30)
+        logger.info(f"Base64 JSON - Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Base64 JSON result: {result}")
+            
             if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
                 return result[0]["generated_text"]
-            if isinstance(result, dict) and result.get("generated_text"):
+            elif isinstance(result, dict) and "generated_text" in result:
                 return result["generated_text"]
         else:
-            logger.warning(f"HF API failed: {resp.status_code}, response: {resp.text}")
+            logger.warning(f"Base64 JSON failed: {response.status_code}, response: {response.text}")
+    
     except Exception as e:
-        logger.exception(f"Caption generation error: {e}")
-    return None
+        logger.warning(f"Base64 JSON method failed: {e}")
+    
+    # Method 3: Try alternative model
+    try:
+        alt_model = "nlpconnect/vit-gpt2-image-captioning"
+        alt_url = f"https://api-inference.huggingface.co/models/{alt_model}"
+        
+        headers = {
+            "Authorization": f"Bearer {HF_API_KEY}",
+        }
+        
+        with open(path, "rb") as f:
+            response = requests.post(alt_url, headers=headers, data=f.read(), timeout=30)
+        
+        logger.info(f"Alternative model - Status: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"Alternative model result: {result}")
+            
+            if isinstance(result, list) and len(result) > 0:
+                if "generated_text" in result[0]:
+                    return result[0]["generated_text"]
+                elif "caption" in result[0]:
+                    return result[0]["caption"]
+        else:
+            logger.warning(f"Alternative model failed: {response.status_code}")
+    
+    except Exception as e:
+        logger.warning(f"Alternative model failed: {e}")
+    
+    # If all methods fail, return a basic fallback
+    logger.error("All HuggingFace API methods failed, using fallback caption")
+    try:
+        with PILImage.open(path) as img:
+            return f"An image ({img.width}x{img.height}, {img.format or 'unknown format'})"
+    except:
+        return "An uploaded image"
 
 def process_image_task(stored_path, original_name, upload_dir, thumbnail_dir):
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
