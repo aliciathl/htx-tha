@@ -52,6 +52,105 @@ def extract_exif(path):
         return None
 
 
+def generate_local_caption(path, max_tokens=30, use_half_precision=True):
+    """Generate caption locally using BLIP following official examples."""
+    try:
+        from transformers import BlipProcessor, BlipForConditionalGeneration
+        import torch
+        from PIL import Image
+
+        # Load model and processor
+        processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        
+        if use_half_precision and device == "cuda":
+            # Use half precision for better memory efficiency on GPU
+            model = BlipForConditionalGeneration.from_pretrained(
+                "Salesforce/blip-image-captioning-base", 
+                torch_dtype=torch.float16
+            ).to(device)
+        else:
+            model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+            model = model.to(device)
+        
+        model.eval()  # Set to evaluation mode
+
+        # Load and prepare image
+        raw_image = Image.open(path).convert("RGB")
+
+        # Process image - following official examples
+        with torch.no_grad():  # Disable gradients for inference
+            inputs = processor(raw_image, return_tensors="pt")
+            
+            if use_half_precision and device == "cuda":
+                inputs = inputs.to(device, torch.float16)
+            else:
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+
+            # Generate caption
+            out = model.generate(
+                **inputs, 
+                max_new_tokens=max_tokens,
+                do_sample=False,  # Use deterministic generation
+                num_beams=1       # Faster single beam search
+            )
+            
+            caption = processor.decode(out[0], skip_special_tokens=True)
+            
+            # Clean up the caption (remove any prefix if present)
+            if caption.lower().startswith("a picture of "):
+                caption = caption[13:]
+            elif caption.lower().startswith("an image of "):
+                caption = caption[12:]
+                
+            return caption.strip()
+
+    except ImportError as e:
+        logger.error(f"Required transformers libraries not installed: {e}")
+        raise
+    except torch.cuda.OutOfMemoryError as e:
+        logger.error(f"CUDA out of memory error: {e}")
+        # Fallback to CPU or retry without half precision
+        if device == "cuda":
+            if use_half_precision:
+                logger.info("Retrying without half precision...")
+                return generate_local_caption(path, max_tokens, use_half_precision=False)
+            else:
+                logger.info("Retrying with CPU...")
+                return generate_local_caption_cpu(path, max_tokens)
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in local caption generation: {e}")
+        raise
+
+
+def generate_local_caption_cpu(path, max_tokens=30):
+    """Fallback CPU-only version of caption generation."""
+    from transformers import BlipProcessor, BlipForConditionalGeneration
+    import torch
+    from PIL import Image
+
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+    
+    model.eval()
+    raw_image = Image.open(path).convert("RGB")
+
+    with torch.no_grad():
+        inputs = processor(raw_image, return_tensors="pt")
+        out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
+        caption = processor.decode(out[0], skip_special_tokens=True)
+        
+        # Clean up caption
+        if caption.lower().startswith("a picture of "):
+            caption = caption[13:]
+        elif caption.lower().startswith("an image of "):
+            caption = caption[12:]
+            
+        return caption.strip()
+
+
 def get_caption_from_hf(path):
     """Generate image caption using HuggingFace API, fallback to local BLIP if available."""
     # --- API mode ---
@@ -112,17 +211,7 @@ def get_caption_from_hf(path):
     # --- Local fallback ---
     try:
         logger.info("Falling back to local BLIP model (transformers)")
-        from transformers import BlipProcessor, BlipForConditionalGeneration
-        import torch
-        from PIL import Image
-
-        processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-
-        raw_image = Image.open(path).convert("RGB")
-        inputs = processor(raw_image, return_tensors="pt", padding=True)  # ✅ padding added
-        out = model.generate(**inputs, max_new_tokens=30)
-        caption = processor.decode(out[0], skip_special_tokens=True)
+        caption = generate_local_caption(path)
         logger.info(f"Local BLIP caption generated: {caption}")
         return caption
     except Exception as e:
