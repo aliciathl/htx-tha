@@ -2,15 +2,12 @@ import os
 from datetime import datetime, timezone
 from PIL import Image as PILImage, UnidentifiedImageError
 import exifread
-import requests
-import base64
 from ..utils.logging import logger
 from werkzeug.utils import secure_filename
+from transformers import BlipProcessor, BlipForConditionalGeneration
+import torch
 
 THUMB_SIZES = {"small": (128, 128), "medium": (512, 512)}
-HF_MODEL = "Salesforce/blip-image-captioning-large"
-HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
-HF_API_KEY = os.getenv("HF_API_KEY")
 
 
 def safe_open_image(path):
@@ -52,183 +49,45 @@ def extract_exif(path):
         return None
 
 
-def generate_local_caption(path, max_tokens=30, use_half_precision=True):
-    """Generate caption locally using BLIP following official examples."""
+def generate_local_caption(path, max_tokens=30):
+    """Generate caption locally using BLIP via transformers"""
     try:
-        from transformers import BlipProcessor, BlipForConditionalGeneration
-        import torch
-        from PIL import Image
-
-        # Load model and processor
         processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        
+        model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        
-        if use_half_precision and device == "cuda":
-            # Use half precision for better memory efficiency on GPU
-            model = BlipForConditionalGeneration.from_pretrained(
-                "Salesforce/blip-image-captioning-base", 
-                torch_dtype=torch.float16
-            ).to(device)
-        else:
-            model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-            model = model.to(device)
-        
-        model.eval()  # Set to evaluation mode
+        model = model.to(device)
+        model.eval()
 
-        # Load and prepare image
-        raw_image = Image.open(path).convert("RGB")
+        raw_image = PILImage.open(path).convert("RGB")
 
-        # Process image - following official examples
-        with torch.no_grad():  # Disable gradients for inference
-            inputs = processor(raw_image, return_tensors="pt")
-            
-            if use_half_precision and device == "cuda":
-                inputs = inputs.to(device, torch.float16)
-            else:
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-
-            # Generate caption
-            out = model.generate(
-                **inputs, 
-                max_new_tokens=max_tokens,
-                do_sample=False,  # Use deterministic generation
-                num_beams=1       # Faster single beam search
-            )
-            
+        with torch.no_grad():
+            # Fix padding issue by adding padding=True
+            inputs = processor(raw_image, return_tensors="pt", padding=True).to(device)
+            out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False, num_beams=1)
             caption = processor.decode(out[0], skip_special_tokens=True)
-            
-            # Clean up the caption (remove any prefix if present)
-            if caption.lower().startswith("a picture of "):
-                caption = caption[13:]
-            elif caption.lower().startswith("an image of "):
-                caption = caption[12:]
-                
-            return caption.strip()
 
-    except ImportError as e:
-        logger.error(f"Required transformers libraries not installed: {e}")
-        raise
-    except torch.cuda.OutOfMemoryError as e:
-        logger.error(f"CUDA out of memory error: {e}")
-        # Fallback to CPU or retry without half precision
-        if device == "cuda":
-            if use_half_precision:
-                logger.info("Retrying without half precision...")
-                return generate_local_caption(path, max_tokens, use_half_precision=False)
-            else:
-                logger.info("Retrying with CPU...")
-                return generate_local_caption_cpu(path, max_tokens)
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error in local caption generation: {e}")
-        raise
-
-
-def generate_local_caption_cpu(path, max_tokens=30):
-    """Fallback CPU-only version of caption generation."""
-    from transformers import BlipProcessor, BlipForConditionalGeneration
-    import torch
-    from PIL import Image
-
-    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-    
-    model.eval()
-    raw_image = Image.open(path).convert("RGB")
-
-    with torch.no_grad():
-        inputs = processor(raw_image, return_tensors="pt")
-        out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
-        caption = processor.decode(out[0], skip_special_tokens=True)
-        
-        # Clean up caption
+        # Clean up the caption
         if caption.lower().startswith("a picture of "):
             caption = caption[13:]
         elif caption.lower().startswith("an image of "):
             caption = caption[12:]
-            
+
         return caption.strip()
 
-
-def get_caption_from_hf(path):
-    """Generate image caption using HuggingFace API, fallback to local BLIP if available."""
-    # --- API mode ---
-    if HF_API_KEY:
-        logger.info("Attempting to generate caption using HuggingFace API")
-
-        # BLIP (preferred via API)
-        try:
-            with open(path, "rb") as f:
-                img_bytes = f.read()
-            img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-
-            response = requests.post(
-                HF_API_URL,
-                headers={
-                    "Authorization": f"Bearer {HF_API_KEY}",
-                    "Content-Type": "application/json"
-                },
-                json={"inputs": img_b64},
-                timeout=30
-            )
-            logger.info(f"BLIP JSON - Status: {response.status_code}")
-
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"BLIP result: {result}")
-                if isinstance(result, list) and result:
-                    return result[0].get("generated_text") or result[0].get("caption")
-                elif isinstance(result, dict):
-                    return result.get("generated_text") or result.get("caption")
-            else:
-                logger.warning(f"BLIP failed: {response.status_code}, response: {response.text}")
-        except Exception as e:
-            logger.exception(f"BLIP JSON method failed: {e}")
-
-        # Alternative API model (ViT-GPT2)
-        try:
-            alt_model = "nlpconnect/vit-gpt2-image-captioning"
-            alt_url = f"https://api-inference.huggingface.co/models/{alt_model}"
-            with open(path, "rb") as f:
-                response = requests.post(
-                    alt_url,
-                    headers={"Authorization": f"Bearer {HF_API_KEY}"},
-                    files={"file": f},
-                    timeout=30
-                )
-            logger.info(f"Alternative model - Status: {response.status_code}")
-            if response.status_code == 200:
-                result = response.json()
-                logger.info(f"Alternative result: {result}")
-                if isinstance(result, list) and result:
-                    return result[0].get("generated_text") or result[0].get("caption")
-            else:
-                logger.warning(f"Alternative model failed: {response.status_code}, response: {response.text}")
-        except Exception as e:
-            logger.exception(f"Alternative model failed: {e}")
-
-    # --- Local fallback ---
-    try:
-        logger.info("Falling back to local BLIP model (transformers)")
-        caption = generate_local_caption(path)
-        logger.info(f"Local BLIP caption generated: {caption}")
-        return caption
     except Exception as e:
-        logger.exception(f"Local BLIP failed: {e}")
-
-    # --- Metadata fallback ---
-    logger.error("All captioning methods failed, using metadata fallback")
-    try:
-        with PILImage.open(path) as img:
-            return f"An image ({img.width}x{img.height}, {img.format or 'unknown format'})"
-    except Exception:
-        return "An uploaded image"
+        logger.exception(f"Local BLIP caption generation failed: {e}")
+        # Fallback to metadata-based caption
+        try:
+            with PILImage.open(path) as img:
+                return f"An image ({img.width}x{img.height}, {img.format or 'unknown format'})"
+        except Exception:
+            return "An uploaded image"
 
 
 def process_image_task(stored_path, original_name, upload_dir, thumbnail_dir):
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
     pil_img = safe_open_image(stored_path)
+
     metadata = {
         "width": pil_img.width,
         "height": pil_img.height,
@@ -237,11 +96,14 @@ def process_image_task(stored_path, original_name, upload_dir, thumbnail_dir):
         "file_datetime": datetime.fromtimestamp(os.path.getmtime(stored_path), timezone.utc).isoformat(),
         "processed_at": datetime.now(timezone.utc).isoformat()
     }
+
     exif = extract_exif(stored_path)
     if exif:
         metadata["exif"] = exif
+
     thumbnails = generate_thumbnails(pil_img, original_name, timestamp, thumbnail_dir)
-    caption = get_caption_from_hf(stored_path)
+    caption = generate_local_caption(stored_path)
+
     return {
         "stored_path": stored_path,
         "processed_at": datetime.now(timezone.utc),
