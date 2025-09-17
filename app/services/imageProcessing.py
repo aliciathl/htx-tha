@@ -61,8 +61,8 @@ def generate_local_caption(path, max_tokens=30):
         raw_image = PILImage.open(path).convert("RGB")
 
         with torch.no_grad():
-            # Fix padding issue by adding padding=True
-            inputs = processor(raw_image, return_tensors="pt", padding=True).to(device)
+            # Correctly process single image
+            inputs = processor(images=raw_image, return_tensors="pt").to(device)
             out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False, num_beams=1)
             caption = processor.decode(out[0], skip_special_tokens=True)
 
