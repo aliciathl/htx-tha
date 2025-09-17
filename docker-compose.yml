@@ -6,7 +6,11 @@ services:
     environment:
       - HF_API_KEY=${HF_API_KEY}
     volumes:
-      - ./app/statics:/app/statics
-      - ./app/image_data.db:/app/image_data.db
-      - ./app/logs:/app/logs
+      # Mount app code
+      - ./app:/app/app
+
+      # Mount statics, DB, logs separately
+      - ./app/statics:/app/app/statics
+      - ./app/image_data.db:/app/app/image_data.db
+      - ./app/logs:/app/app/logs
     restart: unless-stopped

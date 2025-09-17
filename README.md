@@ -31,7 +31,7 @@ python init_db.py
 
 ### 3. Set Environment Variables
 ```bash
-export HF_API_KEY=your_huggingface_api_key  # This is for the AI captioning
+export HF_API_KEY=your_huggingface_api_key
 ```
 
 ### 4. Run the Server
@@ -53,19 +53,6 @@ pytest -q tests/test_api.py
 POST /api/images
 curl -F "file=@photo.jpg" http://localhost:5000/api/images
 ```
-**Response (202 Accepted):**
-```json
-{
-  "status": "success",
-  "data": {
-    "image_id": 1,
-    "original_name": "photo.jpg",
-    "status": "processing",
-    "message": "Image uploaded successfully and processing started"
-  },
-  "error": null
-}
-```
 
 ### List All Images
 ```bash
@@ -78,30 +65,6 @@ curl http://localhost:5000/api/images
 GET /api/images/{id}
 curl http://localhost:5000/api/images/1
 ```
-**Response:**
-```json
-{
-  "status": "success",
-  "data": {
-    "image_id": 1,
-    "original_name": "photo.jpg",
-    "status": "success",
-    "metadata": {
-      "width": 1920,
-      "height": 1080,
-      "format": "jpg",
-      "size_bytes": 2048576,
-      "exif": {"Camera": "Canon"}
-    },
-    "thumbnails": {
-      "small": "/api/images/1/thumbnails/small",
-      "medium": "/api/images/1/thumbnails/medium"
-    },
-    "caption": "A beautiful landscape with mountains and trees"
-  },
-  "error": null
-}
-```
 
 ### Get Thumbnails
 ```bash
@@ -113,21 +76,6 @@ curl http://localhost:5000/api/images/1/thumbnails/small --output thumb.jpg
 ```bash
 GET /api/stats
 curl http://localhost:5000/api/stats
-```
-**Response:**
-```json
-{
-  "status": "success",
-  "data": {
-    "total_images": 10,
-    "successful": 8,
-    "failed": 1,
-    "processing": 1,
-    "success_rate": 80.0,
-    "average_processing_time_seconds": 3.45
-  },
-  "error": null
-}
 ```
 
 ## Image Processing Flow
@@ -149,15 +97,6 @@ The API handles:
 - Corrupted uploads and processing failures
 - Database connection issues
 - Missing resources
-
-All errors return consistent JSON format:
-```json
-{
-  "status": "error",
-  "data": null,
-  "error": "Error message description"
-}
-```
 
 ## Configuration
 
@@ -191,26 +130,11 @@ Use the curl commands shown in the API endpoints section above.
 - **"Image not found"**: Check image ID exists via list endpoint
 - **AI captioning not working**: Set HF_API_KEY environment variable
 
-**Debug Mode:**
-```bash
-export FLASK_DEBUG=1
-python main.py
-```
-
-Check `app.log` for detailed processing information and errors.
-
-## Production Deployment
-
-### Using Gunicorn
-```bash
-pip install gunicorn
-gunicorn -w 4 -b 0.0.0.0:5000 main:app
-```
-
 ### Docker 
 ```bash
-docker build -t image-processing-api .
-docker run -p 5000:5000 image-processing-api
+docker-compose up --build -d
+docker ps 
+docker logs <container_id>
 ```
 
 ## Resources
