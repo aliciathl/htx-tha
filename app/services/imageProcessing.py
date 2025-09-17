@@ -9,6 +9,20 @@ import torch
 
 THUMB_SIZES = {"small": (128, 128), "medium": (512, 512)}
 
+# Load BLIP model and processor once (module level)
+try:
+    processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+    model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = model.to(device)
+    model.eval()
+    logger.info(f"BLIP model loaded on {device}")
+except Exception as e:
+    logger.exception(f"Failed to load BLIP model: {e}")
+    processor = None
+    model = None
+    device = "cpu"
+
 
 def safe_open_image(path):
     try:
@@ -49,24 +63,24 @@ def extract_exif(path):
         return None
 
 
-def generate_local_caption(path, max_tokens=30):
-    """Generate caption locally using BLIP via transformers"""
-    try:
-        processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-        model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = model.to(device)
-        model.eval()
+def generate_local_caption_from_path(path, max_tokens=30):
+    """
+    Generate caption from an image file path.
+    Follows Hugging Face BLIP examples (unconditional captioning).
+    """
+    if not processor or not model:
+        logger.warning("BLIP model not loaded; skipping caption generation.")
+        return "An uploaded image"
 
+    try:
         raw_image = PILImage.open(path).convert("RGB")
 
         with torch.no_grad():
-            # Correctly process single image
-            inputs = processor(images=raw_image, return_tensors="pt").to(device)
+            inputs = processor(raw_image, return_tensors="pt", padding=True).to(device)
             out = model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False, num_beams=1)
             caption = processor.decode(out[0], skip_special_tokens=True)
 
-        # Clean up the caption
+        # Clean up generic captions
         if caption.lower().startswith("a picture of "):
             caption = caption[13:]
         elif caption.lower().startswith("an image of "):
@@ -75,8 +89,7 @@ def generate_local_caption(path, max_tokens=30):
         return caption.strip()
 
     except Exception as e:
-        logger.exception(f"Local BLIP caption generation failed: {e}")
-        # Fallback to metadata-based caption
+        logger.exception(f"BLIP caption generation failed: {e}")
         try:
             with PILImage.open(path) as img:
                 return f"An image ({img.width}x{img.height}, {img.format or 'unknown format'})"
@@ -84,8 +97,19 @@ def generate_local_caption(path, max_tokens=30):
             return "An uploaded image"
 
 
-def process_image_task(stored_path, original_name, upload_dir, thumbnail_dir):
+def process_image_task(file_storage, upload_dir, thumbnail_dir):
+    """
+    file_storage: the file object received from Flask POST request (request.files['file'])
+    """
+    os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(thumbnail_dir, exist_ok=True)
+
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    original_name = file_storage.filename
+    stored_filename = f"{timestamp}_{secure_filename(original_name)}"
+    stored_path = os.path.join(upload_dir, stored_filename)
+    file_storage.save(stored_path)
+
     pil_img = safe_open_image(stored_path)
 
     metadata = {
@@ -102,7 +126,7 @@ def process_image_task(stored_path, original_name, upload_dir, thumbnail_dir):
         metadata["exif"] = exif
 
     thumbnails = generate_thumbnails(pil_img, original_name, timestamp, thumbnail_dir)
-    caption = generate_local_caption(stored_path)
+    caption = generate_local_caption_from_path(stored_path)
 
     return {
         "stored_path": stored_path,
