@@ -4,7 +4,6 @@ from PIL import Image as PILImage, UnidentifiedImageError
 import exifread
 import requests
 import base64
-import json
 from ..utils.logging import logger
 from werkzeug.utils import secure_filename
 
@@ -12,6 +11,7 @@ THUMB_SIZES = {"small": (128, 128), "medium": (512, 512)}
 HF_MODEL = "Salesforce/blip-image-captioning-large"
 HF_API_URL = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
 HF_API_KEY = os.getenv("HF_API_KEY")
+
 
 def safe_open_image(path):
     try:
@@ -23,12 +23,13 @@ def safe_open_image(path):
         logger.exception(f"Error opening image: {e}")
         raise
 
+
 def generate_thumbnails(pil_img, original_name, timestamp, thumbnail_dir):
     thumbnails = {}
     for size, dims in THUMB_SIZES.items():
         img_copy = pil_img.copy()
         img_copy.thumbnail(dims)
-        ext = "jpg" if pil_img.format and pil_img.format.lower() in ("jpeg","jpg") else "png"
+        ext = "jpg" if pil_img.format and pil_img.format.lower() in ("jpeg", "jpg") else "png"
         filename = f"{timestamp}_{size}_{secure_filename(original_name)}"
         if not filename.lower().endswith(f".{ext}"):
             filename += f".{ext}"
@@ -40,127 +41,101 @@ def generate_thumbnails(pil_img, original_name, timestamp, thumbnail_dir):
         logger.info(f"Generated thumbnail {size}: {path}")
     return thumbnails
 
+
 def extract_exif(path):
     try:
         with open(path, "rb") as f:
             tags = exifread.process_file(f, details=False)
-        return {str(k): str(v) for k,v in tags.items()} if tags else None
+        return {str(k): str(v) for k, v in tags.items()} if tags else None
     except Exception as e:
         logger.warning(f"EXIF extraction failed: {e}")
         return None
 
+
 def get_caption_from_hf(path):
-    """Updated HuggingFace API call with improved error handling and multiple formats"""
-    if not HF_API_KEY:
-        logger.warning("HF_API_KEY not set; skipping caption")
-        return None
-    
-    logger.info("Attempting to generate caption using HuggingFace API")
-    
-    # Method 1: Try binary data upload (new serverless inference format)
+    """Generate image caption using HuggingFace API, fallback to local BLIP if available."""
+    # --- API mode ---
+    if HF_API_KEY:
+        logger.info("Attempting to generate caption using HuggingFace API")
+
+        # BLIP (preferred via API)
+        try:
+            with open(path, "rb") as f:
+                img_bytes = f.read()
+            img_b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+            response = requests.post(
+                HF_API_URL,
+                headers={
+                    "Authorization": f"Bearer {HF_API_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={"inputs": img_b64},
+                timeout=30
+            )
+            logger.info(f"BLIP JSON - Status: {response.status_code}")
+
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"BLIP result: {result}")
+                if isinstance(result, list) and result:
+                    return result[0].get("generated_text") or result[0].get("caption")
+                elif isinstance(result, dict):
+                    return result.get("generated_text") or result.get("caption")
+            else:
+                logger.warning(f"BLIP failed: {response.status_code}, response: {response.text}")
+        except Exception as e:
+            logger.exception(f"BLIP JSON method failed: {e}")
+
+        # Alternative API model (ViT-GPT2)
+        try:
+            alt_model = "nlpconnect/vit-gpt2-image-captioning"
+            alt_url = f"https://api-inference.huggingface.co/models/{alt_model}"
+            with open(path, "rb") as f:
+                response = requests.post(
+                    alt_url,
+                    headers={"Authorization": f"Bearer {HF_API_KEY}"},
+                    files={"file": f},
+                    timeout=30
+                )
+            logger.info(f"Alternative model - Status: {response.status_code}")
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"Alternative result: {result}")
+                if isinstance(result, list) and result:
+                    return result[0].get("generated_text") or result[0].get("caption")
+            else:
+                logger.warning(f"Alternative model failed: {response.status_code}, response: {response.text}")
+        except Exception as e:
+            logger.exception(f"Alternative model failed: {e}")
+
+    # --- Local fallback ---
     try:
-        headers = {
-            "Authorization": f"Bearer {HF_API_KEY}",
-        }
-        
-        with open(path, "rb") as f:
-            response = requests.post(HF_API_URL, headers=headers, data=f.read(), timeout=30)
-        
-        logger.info(f"Binary upload - Status: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            logger.info(f"Binary upload result: {result}")
-            
-            # Handle different response formats
-            if isinstance(result, list) and len(result) > 0:
-                if "generated_text" in result[0]:
-                    return result[0]["generated_text"]
-                elif "caption" in result[0]:
-                    return result[0]["caption"]
-                elif "label" in result[0]:
-                    return result[0]["label"]
-            elif isinstance(result, dict):
-                if "generated_text" in result:
-                    return result["generated_text"]
-                elif "caption" in result:
-                    return result["caption"]
-        
-        elif response.status_code == 503:
-            logger.warning("Model is loading, trying alternative method...")
-        elif response.status_code == 429:
-            logger.warning("Rate limit exceeded, trying alternative method...")
-        else:
-            logger.warning(f"Binary upload failed: {response.status_code}, response: {response.text}")
-        
+        logger.info("Falling back to local BLIP model (transformers)")
+        from transformers import BlipProcessor, BlipForConditionalGeneration
+        import torch
+        from PIL import Image
+
+        processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
+        model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+
+        raw_image = Image.open(path).convert("RGB")
+        inputs = processor(raw_image, return_tensors="pt", padding=True)  # ✅ padding added
+        out = model.generate(**inputs, max_new_tokens=30)
+        caption = processor.decode(out[0], skip_special_tokens=True)
+        logger.info(f"Local BLIP caption generated: {caption}")
+        return caption
     except Exception as e:
-        logger.warning(f"Binary upload method failed: {e}")
-    
-    # Method 2: Try base64 JSON format (legacy format)
-    try:
-        with open(path, "rb") as f:
-            img_bytes = f.read()
-        img_b64 = base64.b64encode(img_bytes).decode("utf-8")
-        
-        payload = json.dumps({"inputs": img_b64})
-        headers = {
-            "Authorization": f"Bearer {HF_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        response = requests.post(HF_API_URL, headers=headers, data=payload, timeout=30)
-        logger.info(f"Base64 JSON - Status: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            logger.info(f"Base64 JSON result: {result}")
-            
-            if isinstance(result, list) and len(result) > 0 and "generated_text" in result[0]:
-                return result[0]["generated_text"]
-            elif isinstance(result, dict) and "generated_text" in result:
-                return result["generated_text"]
-        else:
-            logger.warning(f"Base64 JSON failed: {response.status_code}, response: {response.text}")
-    
-    except Exception as e:
-        logger.warning(f"Base64 JSON method failed: {e}")
-    
-    # Method 3: Try alternative model
-    try:
-        alt_model = "nlpconnect/vit-gpt2-image-captioning"
-        alt_url = f"https://api-inference.huggingface.co/models/{alt_model}"
-        
-        headers = {
-            "Authorization": f"Bearer {HF_API_KEY}",
-        }
-        
-        with open(path, "rb") as f:
-            response = requests.post(alt_url, headers=headers, data=f.read(), timeout=30)
-        
-        logger.info(f"Alternative model - Status: {response.status_code}")
-        
-        if response.status_code == 200:
-            result = response.json()
-            logger.info(f"Alternative model result: {result}")
-            
-            if isinstance(result, list) and len(result) > 0:
-                if "generated_text" in result[0]:
-                    return result[0]["generated_text"]
-                elif "caption" in result[0]:
-                    return result[0]["caption"]
-        else:
-            logger.warning(f"Alternative model failed: {response.status_code}")
-    
-    except Exception as e:
-        logger.warning(f"Alternative model failed: {e}")
-    
-    # If all methods fail, return a basic fallback
-    logger.error("All HuggingFace API methods failed, using fallback caption")
+        logger.exception(f"Local BLIP failed: {e}")
+
+    # --- Metadata fallback ---
+    logger.error("All captioning methods failed, using metadata fallback")
     try:
         with PILImage.open(path) as img:
             return f"An image ({img.width}x{img.height}, {img.format or 'unknown format'})"
-    except:
+    except Exception:
         return "An uploaded image"
+
 
 def process_image_task(stored_path, original_name, upload_dir, thumbnail_dir):
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
